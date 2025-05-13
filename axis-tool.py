@@ -784,8 +784,23 @@ class AxisToolApp:
         lbl_pos = w["pos_label"]
 
         # ステータス情報を取得（リミット状態など）
-        # 注：エラーが発生しても処理は続行
-        fetch_axis_status(axis)
+        # aperture系の軸はstatusコマンドがないのでポーリングしない
+        # width, height で終わる軸名はスキップ
+        is_aperture_axis = (axis_name.endswith("width") or
+                          axis_name.endswith("height") or
+                          axis.unit == "mm")
+
+        if not is_aperture_axis:
+            # 注：エラーが発生しても処理は続行
+            fetch_axis_status(axis)
+        else:
+            # aperture軸はリミット情報をクリア
+            axis.cw_hard_limit = False
+            axis.ccw_hard_limit = False
+            axis.cw_soft_limit = False
+            axis.ccw_soft_limit = False
+            axis.home_position = False
+            axis.status_decimal = 0
 
         # エラー状態の場合は特別処理
         if error_flag:
@@ -1083,18 +1098,27 @@ def test_axis(axis_name: str):
                 mm_position = adjusted_position / found_axis.val2pulse
                 print(f"位置 (mm): {mm_position:.3f} mm")
 
-            # ステータス情報も取得
-            if fetch_axis_status(found_axis):
+            # aperture系の軸はstatusコマンドがないのでポーリングしない
+            is_aperture_axis = (axis_name.endswith("width") or
+                              axis_name.endswith("height") or
+                              found_axis.unit == "mm")
+
+            if is_aperture_axis:
                 print("----------------------------------")
-                print("リミット状態:")
-                print(f"CW Hard Limit: {'あり' if found_axis.cw_hard_limit else 'なし'}")
-                print(f"CW Soft Limit: {'あり' if found_axis.cw_soft_limit else 'なし'}")
-                print(f"Home Position: {'あり' if found_axis.home_position else 'なし'}")
-                print(f"CCW Soft Limit: {'あり' if found_axis.ccw_soft_limit else 'なし'}")
-                print(f"CCW Hard Limit: {'あり' if found_axis.ccw_hard_limit else 'なし'}")
-                print(f"ステータス値 (10進数): {found_axis.status_decimal}")
+                print("注: この軸はapertureタイプのため、ステータス情報は利用できません。")
             else:
-                print("警告: リミット状態を取得できませんでした。")
+                # ステータス情報を取得
+                if fetch_axis_status(found_axis):
+                    print("----------------------------------")
+                    print("リミット状態:")
+                    print(f"CW Hard Limit: {'あり' if found_axis.cw_hard_limit else 'なし'}")
+                    print(f"CW Soft Limit: {'あり' if found_axis.cw_soft_limit else 'なし'}")
+                    print(f"Home Position: {'あり' if found_axis.home_position else 'なし'}")
+                    print(f"CCW Soft Limit: {'あり' if found_axis.ccw_soft_limit else 'なし'}")
+                    print(f"CCW Hard Limit: {'あり' if found_axis.ccw_hard_limit else 'なし'}")
+                    print(f"ステータス値 (10進数): {found_axis.status_decimal}")
+                else:
+                    print("警告: リミット状態を取得できませんでした。")
 
     except Exception as e:
         print(f"エラー: {e}")
