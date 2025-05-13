@@ -196,10 +196,15 @@ def fetch_state_and_position(axis: Axis):
 
                     # 1. query応答で直接mmが返ってくる場合の処理
                     if 'mm' in part and ('_' in part):
-                        # 例: inactive_7.150mm のようなフォーマット
+                        # 例: inactive_7.150mm または ok_1.000mm のようなフォーマット
                         try:
                             state_part, pos_part = part.split('_', 1)
-                            st = state_part
+                            # "ok_"からはじまる形式は"inactive_"と同様に処理
+                            if state_part == "ok":
+                                st = "inactive"
+                            else:
+                                st = state_part
+
                             pos = float(pos_part.replace("mm", "").strip())
                             # mm応答を直接返す軸はunit="mm"として扱う
                             axis.unit = "mm"
