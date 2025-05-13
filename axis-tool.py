@@ -737,19 +737,29 @@ class AxisToolApp:
 
         s = axis.sense
 
-        # 特殊単位（mm/deg/mrad）の軸の場合は、そのままの値を送信
-        if axis.unit in ["mm", "deg", "mrad"]:
-            pos = fv * s  # センス値は適用
-            expected_pos_pulse = None  # mmなど特殊単位の軸はexpected_posをNoneに
-        # 通常のpulse軸の場合
-        elif self.unit_var.get() == "mm":
-            # GUI上でmmを選択中にpulse軸を操作する場合
-            pos = int(round((fv * axis.val2pulse) / s))
-            expected_pos_pulse = pos
+        # GUIモードと軸タイプに応じた入力値の処理
+        if self.unit_var.get() == "pulse":
+            # GUIがpulseモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸へのパルス値入力
+                # パルス値を特殊単位に変換して送信
+                unit_val = fv / axis.val2pulse
+                pos = unit_val * s  # センス値は適用
+                expected_pos_pulse = int(fv)  # 予想位置はパルス値
+            else:
+                # 通常のpulse軸の場合
+                pos = int(round(fv / s))
+                expected_pos_pulse = pos
         else:
-            # GUI上でpulseを選択中にpulse軸を操作する場合
-            pos = int(round(fv / s))
-            expected_pos_pulse = pos
+            # GUIがmmモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸への値入力 (mmで入力されている場合も元の単位で送信)
+                pos = fv * s  # センス値は適用
+                expected_pos_pulse = int(pos * axis.val2pulse)
+            else:
+                # 通常のpulse軸を操作する場合
+                pos = int(round((fv * axis.val2pulse) / s))
+                expected_pos_pulse = pos
 
         if put_position(axis, pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
@@ -776,22 +786,31 @@ class AxisToolApp:
             print(f"[Error] Could not get current position for {axis_name}")
             return
 
-        # 特殊単位（mm/deg/mrad）の軸の場合
-        if axis.unit in ["mm", "deg", "mrad"]:
-            diff = fv
-            new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
-            expected_pos_pulse = None
-        # 通常のpulse軸の場合
-        elif self.unit_var.get() == "mm":
-            # GUI上でmmを選択中にpulse軸を操作する場合
-            diff = int(round((fv * axis.val2pulse) / s))
-            new_pos = cur_pos + diff
-            expected_pos_pulse = new_pos
+        # GUIモードと軸タイプに応じた入力値の処理
+        if self.unit_var.get() == "pulse":
+            # GUIがpulseモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸へのパルス値入力
+                diff = fv / axis.val2pulse  # パルス値を特殊単位に変換
+                new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
+                expected_pos_pulse = int(cur_pos * axis.val2pulse + fv)  # 予想位置はパルス値
+            else:
+                # 通常のpulse軸の場合
+                diff = int(round(fv / s))
+                new_pos = cur_pos + diff
+                expected_pos_pulse = new_pos
         else:
-            # GUI上でpulseを選択中にpulse軸を操作する場合
-            diff = int(round(fv / s))
-            new_pos = cur_pos + diff
-            expected_pos_pulse = new_pos
+            # GUIがmmモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸への値入力
+                diff = fv
+                new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
+                expected_pos_pulse = int(new_pos * axis.val2pulse)
+            else:
+                # 通常のpulse軸の場合
+                diff = int(round((fv * axis.val2pulse) / s))
+                new_pos = cur_pos + diff
+                expected_pos_pulse = new_pos
 
         if put_position(axis, new_pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
@@ -818,22 +837,31 @@ class AxisToolApp:
             print(f"[Error] Could not get current position for {axis_name}")
             return
 
-        # 特殊単位（mm/deg/mrad）の軸の場合
-        if axis.unit in ["mm", "deg", "mrad"]:
-            diff = fv
-            new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
-            expected_pos_pulse = None
-        # 通常のpulse軸の場合
-        elif self.unit_var.get() == "mm":
-            # GUI上でmmを選択中にpulse軸を操作する場合
-            diff = int(round((fv * axis.val2pulse) / s))
-            new_pos = cur_pos - diff
-            expected_pos_pulse = new_pos
+        # GUIモードと軸タイプに応じた入力値の処理
+        if self.unit_var.get() == "pulse":
+            # GUIがpulseモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸へのパルス値入力
+                diff = fv / axis.val2pulse  # パルス値を特殊単位に変換
+                new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
+                expected_pos_pulse = int(cur_pos * axis.val2pulse - fv)  # 予想位置はパルス値
+            else:
+                # 通常のpulse軸の場合
+                diff = int(round(fv / s))
+                new_pos = cur_pos - diff
+                expected_pos_pulse = new_pos
         else:
-            # GUI上でpulseを選択中にpulse軸を操作する場合
-            diff = int(round(fv / s))
-            new_pos = cur_pos - diff
-            expected_pos_pulse = new_pos
+            # GUIがmmモードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸への値入力
+                diff = fv
+                new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
+                expected_pos_pulse = int(new_pos * axis.val2pulse)
+            else:
+                # 通常のpulse軸の場合
+                diff = int(round((fv * axis.val2pulse) / s))
+                new_pos = cur_pos - diff
+                expected_pos_pulse = new_pos
 
         if put_position(axis, new_pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
@@ -941,17 +969,27 @@ class AxisToolApp:
                 else:
                     limit_labels[i].config(text="□", fg="black")
 
-        # 位置表示の更新 (軸の単位に応じて表示)
-        if axis.unit in ["mm", "deg", "mrad"]:
-            # 特殊単位の軸はその単位でそのまま表示
-            w["pos_var"].set(f"{pos_int * s} {axis.unit}")
-        elif self.unit_var.get() == "pulse":
-            # 通常の軸でGUIがpulse表示モードの場合
-            w["pos_var"].set(f"{pos_int * s} pulse")
+        # 位置表示の更新 (現在の表示モードと軸の単位に応じて表示)
+        adjusted_value = pos_int * s  # センス値を適用した値
+
+        if self.unit_var.get() == "pulse":
+            # GUIがパルス表示モードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸は、val2pulseを使ってpulseに変換
+                pulse_val = int(adjusted_value * axis.val2pulse)
+                w["pos_var"].set(f"{pulse_val} pulse ({adjusted_value} {axis.unit})")
+            else:
+                # 通常の軸はそのままpulseで表示
+                w["pos_var"].set(f"{int(adjusted_value)} pulse")
         else:
-            # 通常の軸でGUIがmm表示モードの場合
-            mm_val = (pos_int * s) / axis.val2pulse
-            w["pos_var"].set(f"{mm_val:.3f} mm")
+            # GUIがmm表示モードの場合
+            if axis.unit in ["mm", "deg", "mrad"]:
+                # 特殊単位の軸はその単位でそのまま表示
+                w["pos_var"].set(f"{adjusted_value} {axis.unit}")
+            else:
+                # 通常の軸はmm単位に変換
+                mm_val = adjusted_value / axis.val2pulse
+                w["pos_var"].set(f"{mm_val:.3f} mm")
 
         # 移動命令直後の特別処理
         if after_move and expected_pos is not None and retry_count < 3:
@@ -980,8 +1018,7 @@ class AxisToolApp:
     def update_all_positions(self):
         """
         現在の表示単位に合わせて位置表示を更新する
-        特殊単位（mm, deg, mrad）の軸はそのままの単位で表示し、
-        通常の軸のみ単位変換を行う
+        全ての軸タイプ（pulse, mm, deg, mrad）に対応
         """
         for axis_name, wdict in self.axis_widgets.items():
             # 該当する軸オブジェクトを見つける
@@ -1002,27 +1039,84 @@ class AxisToolApp:
             if not txt or txt in ("---", "", "ERROR"):
                 continue
 
-            # 特殊単位の軸はそのまま維持
+            # テキストから現在の値を抽出
+            val2pulse = axis_obj.val2pulse
+            sense = axis_obj.sense
+            current_value = None
+            unit_value = None
+
+            # 特殊単位の軸（mm, deg, mrad）の場合
             if axis_obj.unit in ["mm", "deg", "mrad"]:
-                continue
+                # 特殊単位の軸でパルス表示モードの場合（例: "12345 pulse (1.234 mm)"）
+                if "pulse" in txt and "(" in txt and ")" in txt:
+                    # パルス値と単位値の両方を取得
+                    pulse_part = txt.split("(")[0].strip()
+                    unit_part = txt.split("(")[1].split(")")[0].strip()
 
-            # 通常軸の単位変換処理
-            for unit in ["pulse", "mm", "deg", "mrad"]:
-                if unit in txt:
-                    tmp = txt.replace(unit, "").strip()
-                    break
-
-            try:
-                fval = float(tmp)
-            except ValueError:
-                continue
-
-            # 単位に応じて表示更新
-            if self.unit_var.get() == "pulse":
-                wdict["pos_var"].set(f"{int(fval)} pulse")
+                    try:
+                        # パルス値を取得
+                        pulse_value = int(pulse_part.replace("pulse", "").strip())
+                        # 単位値を取得（例: "1.234 mm"）
+                        unit_parts = unit_part.split()
+                        if len(unit_parts) >= 2:
+                            unit_value = float(unit_parts[0])
+                            current_value = pulse_value  # パルス値を現在値として保存
+                    except ValueError:
+                        continue
+                else:
+                    # 単位値のみの表示（例: "1.234 mm"）
+                    for unit in ["mm", "deg", "mrad"]:
+                        if unit in txt:
+                            try:
+                                unit_value = float(txt.replace(unit, "").strip())
+                                # 単位値からパルス値に変換
+                                current_value = int(unit_value * val2pulse / sense)
+                                break
+                            except ValueError:
+                                continue
             else:
-                mm_val = fval / wdict["val2pulse"]
-                wdict["pos_var"].set(f"{mm_val:.3f} mm")
+                # 通常の軸（pulse単位）の場合
+                for unit in ["pulse", "mm"]:
+                    if unit in txt:
+                        try:
+                            if unit == "pulse":
+                                current_value = int(txt.replace("pulse", "").strip())
+                            else:  # mm
+                                unit_value = float(txt.replace("mm", "").strip())
+                                current_value = int(unit_value * val2pulse / sense)
+                            break
+                        except ValueError:
+                            continue
+
+            # 現在値が取得できなかった場合はスキップ
+            if current_value is None:
+                continue
+
+            # センス値を適用した値
+            adjusted_value = current_value * sense
+
+            # 表示モードに応じて表示を更新
+            if self.unit_var.get() == "pulse":
+                # パルス表示モード
+                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                    # 特殊単位の軸は、単位値もカッコ内に表示
+                    if unit_value is None:
+                        unit_value = adjusted_value / val2pulse
+                    wdict["pos_var"].set(f"{int(adjusted_value)} pulse ({unit_value} {axis_obj.unit})")
+                else:
+                    # 通常の軸はパルス値のみ表示
+                    wdict["pos_var"].set(f"{int(adjusted_value)} pulse")
+            else:
+                # mm表示モード
+                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                    # 特殊単位の軸はその単位で表示
+                    if unit_value is None:
+                        unit_value = adjusted_value / val2pulse
+                    wdict["pos_var"].set(f"{unit_value} {axis_obj.unit}")
+                else:
+                    # 通常の軸はmm単位に変換して表示
+                    mm_val = adjusted_value / val2pulse
+                    wdict["pos_var"].set(f"{mm_val:.3f} mm")
 
     def save_current_value(self):
         grp = self.group_var.get()
