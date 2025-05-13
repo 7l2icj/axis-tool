@@ -1,0 +1,128 @@
+- group:
+    name: debug
+    axes:
+    - axis:
+        name: pmac_gonio_1_x
+        display: pmac_gonio_x
+        val2pulse: 2000
+    - axis:
+        name: pmac_gonio_1_y
+        display: pmac_gonio_y
+        val2pulse: 2000
+    - axis:
+        name: pmac_gonio_1_z
+        display: pmac_gonio_z
+        val2pulse: 2000
+- group:
+    name: mh-mirror
+    axes:
+    - axis:
+        name: st2_stage_1_y
+        display: st2_stage_1_y
+    - axis:
+        name: st2_stage_1_z
+        display: st2_stage_1_z
+    - axis:
+        name: st2_detector_1_y
+        display: st2_detector_1_y
+    - axis:
+        name: st2_detector_1_z
+        display: st2_detector_1_z
+    - axis:
+        name: st2_mh2_1_y
+        display: st2_mh2_1_y
+    - axis:
+        name: st2_mh2_1_tz
+        display: st2_mh2_1_tz
+    - axis:
+        name: st2_mv_1_z
+        display: st2_mv_1_z
+    - axis:
+        name: st2_mv_1_ty
+        display: st2_mv_1_ty
+        
+        
+- group:
+    name: beamsize
+    axes:
+    - axis:
+        name: tc1_slit_2_width
+        display: tc1_slit_2_width
+        val2pulse: 2000
+    - axis:
+        name: st2_mh2_1_tz
+        display: st2_mh2_1_tz
+        val2pulse: 2000
+    - axis:
+        name: st2_mv_1_ty
+        display: st2_mv_1_ty
+        val2pulse: 2000
+    - axis:
+        name: st2_stage_1_z
+        display: st2_stage_1_z
+        val2pulse: 2000
+    - axis:
+        name: st2_stage_1_y
+        display: st2_stage_1_y
+        val2pulse: 2000
+    - axis:
+        name: st2_detector_1_z
+        display: st2_detector_1_z
+        val2pulse: 2000
+    - axis:
+        name: st2_detector_1_y
+        display: st2_detector_1_y
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_hall
+        display: st2_slit_2_hall
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_ring
+        display: st2_slit_2_ring
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_upper
+        display: st2_slit_2_upper
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_lower
+        display: st2_slit_2_lower
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_y
+        display: st2_slit_2_y
+        val2pulse: 2000
+    - axis:
+        name: st2_slit_2_z
+        display: st2_slit_2_z
+        val2pulse: 2000
+
+- group:
+    name: foucoh
+    axes:
+    - axis:
+        name: st2_motor_1_3
+        display: wire_x
+    - axis:
+        name: st2_motor_1_1
+        display: wire_y
+    - axis:
+        name: st2_motor_1_2
+        display: wire_z
+    - axis:
+        name: st2_monitor_1_z
+        display: monitor_z
+
+- group:
+    name: injector
+    axes:
+    - axis:
+        name: st2_coax_1_x
+        display: inj_x
+    - axis:
+        name: st2_bs_1_x
+        display: inj_y
+    - axis:
+        name: st2_light_1_z
+        display: inj_z
