@@ -194,9 +194,18 @@ def fetch_state_and_position(axis: Axis):
                 if len(splitted) > 3:
                     part = splitted[3]
 
-                    # 1. query応答で直接mmが返ってくる場合の処理
-                    if 'mm' in part and ('_' in part):
-                        # 例: inactive_7.150mm または ok_1.000mm のようなフォーマット
+                    # 1. query応答で直接単位つきで値が返ってくる場合の処理
+                    units = ["mm", "deg", "mrad"]  # 対応する単位リスト
+                    found_unit = None
+
+                    # どの単位が含まれているか確認
+                    for unit in units:
+                        if unit in part and ('_' in part):
+                            found_unit = unit
+                            break
+
+                    if found_unit:
+                        # 例: inactive_7.150mm または ok_1.000deg のようなフォーマット
                         try:
                             state_part, pos_part = part.split('_', 1)
                             # "ok_"からはじまる形式は"inactive_"と同様に処理
@@ -205,9 +214,9 @@ def fetch_state_and_position(axis: Axis):
                             else:
                                 st = state_part
 
-                            pos = float(pos_part.replace("mm", "").strip())
-                            # mm応答を直接返す軸はunit="mm"として扱う
-                            axis.unit = "mm"
+                            pos = float(pos_part.replace(found_unit, "").strip())
+                            # 応答の単位を覚えておく
+                            axis.unit = found_unit
                             return (st, pos, False)
                         except (ValueError, IndexError):
                             pass
@@ -274,10 +283,13 @@ def fetch_state_and_position(axis: Axis):
         print(f"[Error] Unexpected error for {axis_name}: {e}")
         return ("error", 0, True)
 
-def put_position(axis: Axis, position: int) -> bool:
+def put_position(axis: Axis, position: float) -> bool:
     """
-    "put/{BL_OBJ}_{axis.axis_name}/{position}pulse" を送信し、
-    応答が "ok/0" なら True を返す
+    単位に応じたputコマンドを送信し、応答が "ok/0" なら True を返す
+    - "put/{BL_OBJ}_{axis.axis_name}/{position}pulse"
+    - "put/{BL_OBJ}_{axis.axis_name}/{position}mm"
+    - "put/{BL_OBJ}_{axis.axis_name}/{position}deg"
+    - "put/{BL_OBJ}_{axis.axis_name}/{position}mrad"
     """
     axis_name = axis.axis_name
     try:
@@ -285,7 +297,21 @@ def put_position(axis: Axis, position: int) -> bool:
             try:
                 s.settimeout(2.0)
                 s.connect((HOST, PORT))
-                cmd = f"put/{BL_OBJ}_{axis_name}/{position}pulse\n"
+
+                # 軸の単位に応じて送信コマンドを作成
+                unit_suffix = "pulse"  # デフォルト単位
+
+                # 特殊単位の場合は、その単位をそのまま使用
+                # mm, deg, mrad のいずれかの単位が設定されていれば、その単位を使用
+                if axis.unit in ["mm", "deg", "mrad"]:
+                    unit_suffix = axis.unit
+                    # 単位付きの軸はそのままの値を送信
+                    value_to_send = position
+                else:
+                    # pulse単位の軸は整数に変換
+                    value_to_send = int(position)
+
+                cmd = f"put/{BL_OBJ}_{axis_name}/{value_to_send}{unit_suffix}\n"
                 print("[Send]", cmd.strip())
                 s.sendall(cmd.encode("utf-8"))
                 resp = s.recv(1024).decode("utf-8").strip()
@@ -471,6 +497,7 @@ class AxisToolApp:
         self.config_groups = config_groups
         self.favorite_list = []  # お気に入り（最新優先、最大10軸）
         self.error_axes = set()  # エラーが発生した軸のセット（再ポーリングしない）
+        self.status_disabled_axes = set()  # statusコマンドが失敗した軸のセット
 
         # 上部バー
         top_frame = tk.Frame(root)
@@ -553,8 +580,9 @@ class AxisToolApp:
 
     # ---------- イベント ----------
     def on_group_changed(self, new_group):
-        # グループ変更時にエラー軸リストをクリア
+        # グループ変更時にエラー軸リストとstatus無効リストをクリア
         self.error_axes.clear()
+        self.status_disabled_axes.clear()
         self.build_axes_for_group(new_group)
         self.poll_all_axes()
         if new_group == "favorite":
@@ -571,13 +599,16 @@ class AxisToolApp:
         self.save_current_value()
 
     def reset_error_axes(self):
-        """エラー軸リストをクリアしてすべての軸のポーリングを再開する"""
-        if not self.error_axes:
+        """エラー軸リストとstatus無効リストをクリアしてすべての軸のポーリングを再開する"""
+        num_errors = len(self.error_axes)
+        num_status_disabled = len(self.status_disabled_axes)
+
+        if not self.error_axes and not self.status_disabled_axes:
             return
 
-        num_errors = len(self.error_axes)
-        print(f"[Info] Resetting {num_errors} axes with errors")
+        print(f"[Info] Resetting {num_errors} axes with errors and {num_status_disabled} axes with disabled status")
         self.error_axes.clear()
+        self.status_disabled_axes.clear()
 
         # 全軸のポーリングを再開
         self.poll_all_axes()
@@ -700,14 +731,26 @@ class AxisToolApp:
             fv = float(val_str)
         except ValueError:
             return
+
         s = axis.sense
-        if self.unit_var.get() == "mm":
+
+        # 特殊単位（mm/deg/mrad）の軸の場合は、そのままの値を送信
+        if axis.unit in ["mm", "deg", "mrad"]:
+            pos = fv * s  # センス値は適用
+            expected_pos_pulse = None  # mmなど特殊単位の軸はexpected_posをNoneに
+        # 通常のpulse軸の場合
+        elif self.unit_var.get() == "mm":
+            # GUI上でmmを選択中にpulse軸を操作する場合
             pos = int(round((fv * axis.val2pulse) / s))
+            expected_pos_pulse = pos
         else:
+            # GUI上でpulseを選択中にpulse軸を操作する場合
             pos = int(round(fv / s))
+            expected_pos_pulse = pos
+
         if put_position(axis, pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=pos, after_move=True)
+            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] abs command failed for {axis_name}")
@@ -725,18 +768,31 @@ class AxisToolApp:
         except ValueError:
             return
         s = axis.sense
-        st, cur_pulse, error_flag = fetch_state_and_position(axis)
+        st, cur_pos, error_flag = fetch_state_and_position(axis)
         if error_flag:
             print(f"[Error] Could not get current position for {axis_name}")
             return
-        if self.unit_var.get() == "mm":
+
+        # 特殊単位（mm/deg/mrad）の軸の場合
+        if axis.unit in ["mm", "deg", "mrad"]:
+            diff = fv
+            new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
+            expected_pos_pulse = None
+        # 通常のpulse軸の場合
+        elif self.unit_var.get() == "mm":
+            # GUI上でmmを選択中にpulse軸を操作する場合
             diff = int(round((fv * axis.val2pulse) / s))
+            new_pos = cur_pos + diff
+            expected_pos_pulse = new_pos
         else:
+            # GUI上でpulseを選択中にpulse軸を操作する場合
             diff = int(round(fv / s))
-        new_pos = cur_pulse + diff
+            new_pos = cur_pos + diff
+            expected_pos_pulse = new_pos
+
         if put_position(axis, new_pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=new_pos, after_move=True)
+            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] plus command failed for {axis_name}")
@@ -754,18 +810,31 @@ class AxisToolApp:
         except ValueError:
             return
         s = axis.sense
-        st, cur_pulse, error_flag = fetch_state_and_position(axis)
+        st, cur_pos, error_flag = fetch_state_and_position(axis)
         if error_flag:
             print(f"[Error] Could not get current position for {axis_name}")
             return
-        if self.unit_var.get() == "mm":
+
+        # 特殊単位（mm/deg/mrad）の軸の場合
+        if axis.unit in ["mm", "deg", "mrad"]:
+            diff = fv
+            new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
+            expected_pos_pulse = None
+        # 通常のpulse軸の場合
+        elif self.unit_var.get() == "mm":
+            # GUI上でmmを選択中にpulse軸を操作する場合
             diff = int(round((fv * axis.val2pulse) / s))
+            new_pos = cur_pos - diff
+            expected_pos_pulse = new_pos
         else:
+            # GUI上でpulseを選択中にpulse軸を操作する場合
             diff = int(round(fv / s))
-        new_pos = cur_pulse - diff
+            new_pos = cur_pos - diff
+            expected_pos_pulse = new_pos
+
         if put_position(axis, new_pos):
             # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=new_pos, after_move=True)
+            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] minus command failed for {axis_name}")
@@ -815,17 +884,24 @@ class AxisToolApp:
         lbl_pos = w["pos_label"]
 
         # ステータス情報を取得（リミット状態など）
-        # aperture系の軸はstatusコマンドがないのでポーリングしない
-        # width, height で終わる軸名はスキップ
-        is_aperture_axis = (axis_name.endswith("width") or
-                          axis_name.endswith("height") or
-                          axis.unit == "mm")
+        # statusコマンドが失敗した軸はリミット情報を取得しない
+        if axis_name not in self.status_disabled_axes:
+            # statusコマンドを試行
+            status_success = fetch_axis_status(axis)
 
-        if not is_aperture_axis:
-            # 注：エラーが発生しても処理は続行
-            fetch_axis_status(axis)
+            # 失敗した場合は以降のポーリングでskipするリストに追加
+            if not status_success:
+                print(f"[Info] Status command failed for {axis_name}, disabling status polling for this axis")
+                self.status_disabled_axes.add(axis_name)
+                # リミット情報をクリア
+                axis.cw_hard_limit = False
+                axis.ccw_hard_limit = False
+                axis.cw_soft_limit = False
+                axis.ccw_soft_limit = False
+                axis.home_position = False
+                axis.status_decimal = 0
         else:
-            # aperture軸はリミット情報をクリア
+            # 以前に失敗したことがある軸はリミット情報をクリア
             axis.cw_hard_limit = False
             axis.ccw_hard_limit = False
             axis.cw_soft_limit = False
@@ -1132,27 +1208,22 @@ def test_axis(axis_name: str):
                 mm_position = adjusted_position / found_axis.val2pulse
                 print(f"位置 (mm): {mm_position:.3f} mm")
 
-            # aperture系の軸はstatusコマンドがないのでポーリングしない
-            is_aperture_axis = (axis_name.endswith("width") or
-                              axis_name.endswith("height") or
-                              found_axis.unit == "mm")
+            # ステータス情報を取得
+            status_success = fetch_axis_status(found_axis)
 
-            if is_aperture_axis:
+            if status_success:
                 print("----------------------------------")
-                print("注: この軸はapertureタイプのため、ステータス情報は利用できません。")
+                print("リミット状態:")
+                print(f"CW Hard Limit: {'あり' if found_axis.cw_hard_limit else 'なし'}")
+                print(f"CW Soft Limit: {'あり' if found_axis.cw_soft_limit else 'なし'}")
+                print(f"Home Position: {'あり' if found_axis.home_position else 'なし'}")
+                print(f"CCW Soft Limit: {'あり' if found_axis.ccw_soft_limit else 'なし'}")
+                print(f"CCW Hard Limit: {'あり' if found_axis.ccw_hard_limit else 'なし'}")
+                print(f"ステータス値 (10進数): {found_axis.status_decimal}")
             else:
-                # ステータス情報を取得
-                if fetch_axis_status(found_axis):
-                    print("----------------------------------")
-                    print("リミット状態:")
-                    print(f"CW Hard Limit: {'あり' if found_axis.cw_hard_limit else 'なし'}")
-                    print(f"CW Soft Limit: {'あり' if found_axis.cw_soft_limit else 'なし'}")
-                    print(f"Home Position: {'あり' if found_axis.home_position else 'なし'}")
-                    print(f"CCW Soft Limit: {'あり' if found_axis.ccw_soft_limit else 'なし'}")
-                    print(f"CCW Hard Limit: {'あり' if found_axis.ccw_hard_limit else 'なし'}")
-                    print(f"ステータス値 (10進数): {found_axis.status_decimal}")
-                else:
-                    print("警告: リミット状態を取得できませんでした。")
+                print("----------------------------------")
+                print("警告: リミット状態を取得できませんでした。")
+                print("※ このエラーが継続する場合、GUI モードではこの軸のステータスポーリングは無効化されます。")
 
     except Exception as e:
         print(f"エラー: {e}")
