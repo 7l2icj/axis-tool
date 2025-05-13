@@ -465,6 +465,7 @@ class AxisToolApp:
         self.root.title("Axis Tool GUI")
         self.config_groups = config_groups
         self.favorite_list = []  # お気に入り（最新優先、最大10軸）
+        self.error_axes = set()  # エラーが発生した軸のセット（再ポーリングしない）
 
         # 上部バー
         top_frame = tk.Frame(root)
@@ -491,6 +492,10 @@ class AxisToolApp:
 
         btn_update = tk.Button(top_frame, text="Update", command=self.poll_all_axes)
         btn_update.pack(side=tk.LEFT, padx=5)
+
+        # リセットボタン（エラー軸のリセット）
+        btn_reset_errors = tk.Button(top_frame, text="Reset Errors", command=self.reset_error_axes)
+        btn_reset_errors.pack(side=tk.LEFT, padx=5)
 
         # ★ 新規追加 ★ 保存／読み込み用ボタン
         self.btn_save_favorite = tk.Button(top_frame, text="Save Favorite", command=self.save_favorite)
@@ -543,6 +548,8 @@ class AxisToolApp:
 
     # ---------- イベント ----------
     def on_group_changed(self, new_group):
+        # グループ変更時にエラー軸リストをクリア
+        self.error_axes.clear()
         self.build_axes_for_group(new_group)
         self.poll_all_axes()
         if new_group == "favorite":
@@ -557,6 +564,18 @@ class AxisToolApp:
     def on_save_button(self):
         self.update_all_positions()
         self.save_current_value()
+
+    def reset_error_axes(self):
+        """エラー軸リストをクリアしてすべての軸のポーリングを再開する"""
+        if not self.error_axes:
+            return
+
+        num_errors = len(self.error_axes)
+        print(f"[Info] Resetting {num_errors} axes with errors")
+        self.error_axes.clear()
+
+        # 全軸のポーリングを再開
+        self.poll_all_axes()
 
     # ---------- グループ表示 ----------
     def build_axes_for_group(self, group_name):
@@ -780,6 +799,10 @@ class AxisToolApp:
         if axis_name not in self.axis_widgets:
             return
 
+        # エラーが発生している軸はポーリングしない（after_move=True の場合は例外）
+        if axis_name in self.error_axes and not after_move:
+            return
+
         # 位置と状態を取得
         st, pos_int, error_flag = fetch_state_and_position(axis)
         w = self.axis_widgets[axis_name]
@@ -809,8 +832,10 @@ class AxisToolApp:
         if error_flag:
             w["pos_var"].set("ERROR")
             lbl_pos.config(bg="red")
-            # エラー状態でも5秒後に再ポーリング
-            self.root.after(5000, lambda: self.poll_axis(axis))
+
+            # エラー軸リストに追加（再ポーリングしない）
+            print(f"[Error] Axis {axis_name} added to error list - will not be polled again")
+            self.error_axes.add(axis_name)
             return
 
         # リミット表示の更新
@@ -1088,6 +1113,7 @@ def test_axis(axis_name: str):
 
         if error_flag:
             print("通信エラー: 軸の位置と状態を取得できませんでした。")
+            print("※ この軸はGUIモードでは再ポーリングされなくなります。")
         else:
             # センス値を適用して表示
             sense = found_axis.sense
