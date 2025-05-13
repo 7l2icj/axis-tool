@@ -177,30 +177,60 @@ def fetch_state_and_position(axis: Axis):
                 s.settimeout(2.0)  # タイムアウト設定
                 s.connect((HOST, PORT))
 
+                # まず query コマンドを送信
+                cmd = f"get/{BL_OBJ}_{axis_name}/query\n"
+                print("[Send]", cmd.strip())
+                s.sendall(cmd.encode("utf-8"))
+                resp = s.recv(1024).decode("utf-8").strip()
+                print("[Recv]", resp)
+
+                # 空応答やエラー応答の検出
+                if not resp or "error" in resp.lower():
+                    print(f"[Error] Invalid response for {axis_name}: {resp}")
+                    return ("error", 0, True)
+
+                # クエリ応答の解析
+                splitted = resp.split('/')
+                if len(splitted) > 3:
+                    part = splitted[3]
+
+                    # 1. query応答で直接mmが返ってくる場合の処理
+                    if 'mm' in part and ('_' in part):
+                        # 例: inactive_7.150mm のようなフォーマット
+                        try:
+                            state_part, pos_part = part.split('_', 1)
+                            st = state_part
+                            pos = float(pos_part.replace("mm", "").strip())
+                            # mm応答を直接返す軸はunit="mm"として扱う
+                            axis.unit = "mm"
+                            return (st, pos, False)
+                        except (ValueError, IndexError):
+                            pass
+
+                    # 2. 通常のステータス情報のみを抽出
+                    if part == "ok":
+                        st = "inactive"
+                    elif '_' in part:
+                        # 例: moving_12345pulse
+                        try:
+                            st, pos_str = part.split('_', 1)
+                            try:
+                                pos_int = int(pos_str.replace("pulse", "").strip())
+                                return (st, pos_int, False)
+                            except ValueError:
+                                pass
+                        except (ValueError, IndexError):
+                            if part.startswith("inactive_") or part.startswith("moving_"):
+                                st = part.split('_')[0]
+
+                # queryだけでは位置がわからない場合、position/aperture を取得する
                 if axis.unit == "mm" or axis_name.endswith("width") or axis_name.endswith("height") or axis_name.endswith("vertical") or axis_name.endswith("horizontal"):
-                    # 最初のクエリ
-                    cmd = f"get/{BL_OBJ}_{axis_name}/query\n"
-                    print("[Send]", cmd.strip())
-                    s.sendall(cmd.encode("utf-8"))
-                    resp = s.recv(1024).decode("utf-8").strip()
-                    print("[Recv]", resp)
-
-                    # 空応答やエラー応答の検出
-                    if not resp or "error" in resp.lower():
-                        print(f"[Error] Invalid response for {axis_name}: {resp}")
-                        return ("error", 0, True)
-
-                    splitted = resp.split('/')
-                    if len(splitted) > 3:
-                        st = splitted[3]
-                        if st == "ok":
-                            st = "inactive"
-
-                    # 位置取得
+                    # 位置取得コマンドを決定
                     if axis_name.endswith("width") or axis_name.endswith("height"):
                         cmd = f"get/{BL_OBJ}_{axis_name}/aperture\n"
                     else:
                         cmd = f"get/{BL_OBJ}_{axis_name}/position\n"
+
                     print("[Send]", cmd.strip())
                     s.sendall(cmd.encode("utf-8"))
                     resp = s.recv(1024).decode("utf-8").strip()
@@ -217,37 +247,11 @@ def fetch_state_and_position(axis: Axis):
                         if 'mm' in part:
                             try:
                                 pos = float(part.replace("mm", "").strip())
+                                axis.unit = "mm"
+                                return (st, pos, False)
                             except ValueError:
-                                pos = 0
-                            axis.unit = "mm"
-                            return (st, pos, False)
-                else:
-                    # 通常の軸クエリ
-                    cmd = f"get/{BL_OBJ}_{axis_name}/query\n"
-                    print("[Send]", cmd.strip())
-                    s.sendall(cmd.encode("utf-8"))
-                    resp = s.recv(1024).decode("utf-8").strip()
-                    print("[Recv]", resp)
+                                pass
 
-                    # 空応答やエラー応答の検出
-                    if not resp or "error" in resp.lower():
-                        print(f"[Error] Invalid query response for {axis_name}: {resp}")
-                        return ("error", 0, True)
-
-                    # 応答解析
-                    splitted = resp.split('/')
-                    if len(splitted) > 3:
-                        part = splitted[3]
-                        if part == "ok":
-                            axis.unit = "mm"
-                            return fetch_state_and_position(axis)  # 再帰呼び出し
-                        if '_' in part:
-                            st, pos_str = part.split('_', 1)
-                            try:
-                                pos_int = int(pos_str.replace("pulse", "").strip())
-                            except ValueError:
-                                pos_int = 0
-                            return (st, pos_int, False)
             except socket.timeout:
                 print(f"[Error] Communication timeout for {axis_name}")
                 return ("error", 0, True)
@@ -264,7 +268,6 @@ def fetch_state_and_position(axis: Axis):
     except Exception as e:
         print(f"[Error] Unexpected error for {axis_name}: {e}")
         return ("error", 0, True)
-
 
 def put_position(axis: Axis, position: int) -> bool:
     """
