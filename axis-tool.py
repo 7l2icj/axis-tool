@@ -975,9 +975,9 @@ class AxisToolApp:
         if self.unit_var.get() == "pulse":
             # GUIがパルス表示モードの場合
             if axis.unit in ["mm", "deg", "mrad"]:
-                # 特殊単位の軸は、val2pulseを使ってpulseに変換
+                # 特殊単位の軸も標準軸と同様にpulseのみを表示
                 pulse_val = int(adjusted_value * axis.val2pulse)
-                w["pos_var"].set(f"{pulse_val} pulse ({adjusted_value} {axis.unit})")
+                w["pos_var"].set(f"{pulse_val} pulse")
             else:
                 # 通常の軸はそのままpulseで表示
                 w["pos_var"].set(f"{int(adjusted_value)} pulse")
@@ -1099,10 +1099,9 @@ class AxisToolApp:
             if self.unit_var.get() == "pulse":
                 # パルス表示モード
                 if axis_obj.unit in ["mm", "deg", "mrad"]:
-                    # 特殊単位の軸は、単位値もカッコ内に表示
-                    if unit_value is None:
-                        unit_value = adjusted_value / val2pulse
-                    wdict["pos_var"].set(f"{int(adjusted_value)} pulse ({unit_value} {axis_obj.unit})")
+                    # 特殊単位の軸も標準軸と同様にpulseのみを表示
+                    pulse_val = int(adjusted_value * val2pulse)
+                    wdict["pos_var"].set(f"{pulse_val} pulse")
                 else:
                     # 通常の軸はパルス値のみ表示
                     wdict["pos_var"].set(f"{int(adjusted_value)} pulse")
