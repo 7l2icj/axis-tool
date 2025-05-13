@@ -511,10 +511,13 @@ class AxisToolApp:
         self.option_group = tk.OptionMenu(top_frame, self.group_var, *group_names, command=self.on_group_changed)
         self.option_group.pack(side=tk.LEFT)
 
-        # 単位選択（pulse / mm）
+        # 単位選択（pulse / mm）- 通常の軸のみに適用
+        unit_frame = tk.LabelFrame(top_frame, text="Display Unit (for pulse axes)")
+        unit_frame.pack(side=tk.LEFT, padx=10, pady=2)
+
         self.unit_var = tk.StringVar(value="pulse")
-        tk.Radiobutton(top_frame, text="pulse", variable=self.unit_var, value="pulse", command=self.on_unit_changed).pack(side=tk.LEFT, padx=5)
-        tk.Radiobutton(top_frame, text="mm", variable=self.unit_var, value="mm", command=self.on_unit_changed).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(unit_frame, text="pulse", variable=self.unit_var, value="pulse", command=self.on_unit_changed).pack(side=tk.LEFT, padx=5)
+        tk.Radiobutton(unit_frame, text="mm", variable=self.unit_var, value="mm", command=self.on_unit_changed).pack(side=tk.LEFT, padx=5)
 
         # 軸表示モード選択（name or display）
         tk.Label(top_frame, text="Axis Label:").pack(side=tk.LEFT, padx=(10,2))
@@ -938,12 +941,15 @@ class AxisToolApp:
                 else:
                     limit_labels[i].config(text="□", fg="black")
 
-        # 位置表示の更新
-        if axis.unit == "mm":
-            w["pos_var"].set(f"{pos_int * s} mm")
+        # 位置表示の更新 (軸の単位に応じて表示)
+        if axis.unit in ["mm", "deg", "mrad"]:
+            # 特殊単位の軸はその単位でそのまま表示
+            w["pos_var"].set(f"{pos_int * s} {axis.unit}")
         elif self.unit_var.get() == "pulse":
+            # 通常の軸でGUIがpulse表示モードの場合
             w["pos_var"].set(f"{pos_int * s} pulse")
         else:
+            # 通常の軸でGUIがmm表示モードの場合
             mm_val = (pos_int * s) / axis.val2pulse
             w["pos_var"].set(f"{mm_val:.3f} mm")
 
@@ -972,15 +978,46 @@ class AxisToolApp:
         lbl_pos.config(bg=bg_color)
 
     def update_all_positions(self):
+        """
+        現在の表示単位に合わせて位置表示を更新する
+        特殊単位（mm, deg, mrad）の軸はそのままの単位で表示し、
+        通常の軸のみ単位変換を行う
+        """
         for axis_name, wdict in self.axis_widgets.items():
-            txt = wdict["pos_var"].get()
-            if not txt or txt in ("---", ""):
+            # 該当する軸オブジェクトを見つける
+            axis_obj = None
+            for g in self.config_groups:
+                for ax in g.get("axes", []):
+                    if ax.axis_name == axis_name:
+                        axis_obj = ax
+                        break
+                if axis_obj:
+                    break
+
+            if not axis_obj:
                 continue
-            tmp = txt.replace("pulse", "").replace("mm", "").strip()
+
+            # 表示テキストを取得
+            txt = wdict["pos_var"].get()
+            if not txt or txt in ("---", "", "ERROR"):
+                continue
+
+            # 特殊単位の軸はそのまま維持
+            if axis_obj.unit in ["mm", "deg", "mrad"]:
+                continue
+
+            # 通常軸の単位変換処理
+            for unit in ["pulse", "mm", "deg", "mrad"]:
+                if unit in txt:
+                    tmp = txt.replace(unit, "").strip()
+                    break
+
             try:
                 fval = float(tmp)
             except ValueError:
                 continue
+
+            # 単位に応じて表示更新
             if self.unit_var.get() == "pulse":
                 wdict["pos_var"].set(f"{int(fval)} pulse")
             else:
@@ -1003,15 +1040,23 @@ class AxisToolApp:
         axes_list = self.favorite_list if grp == "favorite" else group_info.get("axes", [])
         lines_axis = []
         for ax in axes_list:
-            st, pos_pulse, error_flag = fetch_state_and_position(ax)
+            st, pos_val, error_flag = fetch_state_and_position(ax)
             if error_flag:
                 # エラー状態の軸はログに"ERROR"として記録
                 lines_axis.append(f"      - {ax.axis_name}: ERROR")
             else:
                 sense_val = ax.sense
-                displayed = pos_pulse * sense_val
+                displayed = pos_val * sense_val
                 time.sleep(0.1)
-                lines_axis.append(f"      - {ax.axis_name}: {displayed} pulse")
+
+                # 軸の単位に応じて表示
+                if ax.unit in ["mm", "deg", "mrad"]:
+                    # 特殊単位の軸はその単位で記録
+                    lines_axis.append(f"      - {ax.axis_name}: {displayed} {ax.unit}")
+                else:
+                    # 通常の軸はpulseで記録
+                    lines_axis.append(f"      - {ax.axis_name}: {displayed} pulse")
+
         lines = []
         lines.append("- log:")
         lines.append(f"    time: {now_str}")
