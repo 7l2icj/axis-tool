@@ -997,7 +997,12 @@ class AxisToolApp:
                 # 移動命令直後なのに inactive かつ位置が予想と違う場合
                 # → 100ms後に再度確認（最大3回）
                 print(f"[Info] Movement command sent but axis {axis_name} reports 'inactive'. Rechecking in 100ms...")
-                self.root.after(100, lambda: self.poll_axis(axis, expected_pos, True, retry_count + 1))
+                # 明示的にコピーした軸オブジェクトとパラメータを使用
+                axis_copy = axis.copy()
+                next_retry = retry_count + 1
+                def retry_check():
+                    self.poll_axis(axis_copy, expected_pos, True, next_retry)
+                self.root.after(100, retry_check)
                 return
 
         # 状態に応じた背景色の設定（主にエラーと動作中の表示）
@@ -1007,11 +1012,19 @@ class AxisToolApp:
         if st.lower() == "error":
             bg_color = "red"
             # エラー状態でも5秒後に再ポーリング
-            self.root.after(5000, lambda: self.poll_axis(axis))
+            # 軸オブジェクトをコピーして使用
+            axis_copy = axis.copy()
+            def error_recheck():
+                self.poll_axis(axis_copy)
+            self.root.after(5000, error_recheck)
         elif st.lower() != "inactive":
             bg_color = "yellow"  # 移動中
             # 動いている間は1秒ごとに再ポーリング
-            self.root.after(1000, lambda: self.poll_axis(axis))
+            # 軸オブジェクトをコピーして使用
+            axis_copy = axis.copy()
+            def moving_recheck():
+                self.poll_axis(axis_copy)
+            self.root.after(1000, moving_recheck)
 
         lbl_pos.config(bg=bg_color)
 
