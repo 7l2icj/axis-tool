@@ -685,6 +685,11 @@ class AxisToolApp:
             # 位置表示
             pos_var = tk.StringVar(value="---")
             lbl_pos = tk.Label(row_frame, textvariable=pos_var, width=15, anchor="e")
+            # 軸のユニットに応じて文字色を設定
+            if axis.unit in ["mm", "deg", "mrad"]:
+                lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
+            else:
+                lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
             lbl_pos.pack(side=tk.LEFT, padx=(5, 10))
             self.bg_default[axis_name] = lbl_pos.cget("bg")
             # 入力エリア
@@ -1015,6 +1020,15 @@ class AxisToolApp:
             # センス値を適用した値
             adjusted_value = current_value * sense
 
+            # 軸のユニットに応じて文字色を設定
+            lbl_pos = wdict.get("pos_label")
+            if lbl_pos:
+                # pulse軸は黒、特殊単位軸（mm/deg/mrad）は青色
+                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                    lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
+                else:
+                    lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
+
             # 表示モードに応じて表示を更新
             if self.unit_var.get() == "pulse":
                 # パルス表示モード
@@ -1281,6 +1295,13 @@ class AxisToolApp:
 
             # 位置表示の更新 (現在の表示モードと軸の単位に応じて表示)
             adjusted_value = pos_int * s  # センス値を適用した値
+
+            # 軸のユニットに応じて文字色を設定
+            # pulse軸は黒、特殊単位軸（mm/deg/mrad）は青色
+            if axis.unit in ["mm", "deg", "mrad"]:
+                lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
+            else:
+                lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
 
             if self.unit_var.get() == "pulse":
                 # GUIがパルス表示モードの場合
