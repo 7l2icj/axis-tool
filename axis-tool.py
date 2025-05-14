@@ -1359,7 +1359,7 @@ class AxisToolApp:
                     self.start_polling_task(axis)
             elif st.lower() != "inactive":
                 # 動いている間は1秒ごとに再ポーリング
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(0.3)
                 if not self.is_shutting_down:
                     self.start_polling_task(axis)
 
