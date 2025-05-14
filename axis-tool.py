@@ -6,6 +6,8 @@ import yaml
 import datetime
 import os
 import time
+import asyncio
+import threading
 from tkinter import simpledialog, messagebox
 
 # BSS_CONFIG_PATH: envの${BLCONFIG}を使用。設定されていない場合はデフォルト値
@@ -499,6 +501,12 @@ class AxisToolApp:
         self.error_axes = set()  # エラーが発生した軸のセット（再ポーリングしない）
         self.status_disabled_axes = set()  # statusコマンドが失敗した軸のセット
 
+        # 非同期ポーリングの管理
+        self.polling_tasks = {}  # 軸ごとのポーリングタスクを管理
+        self.loop = None  # asyncioのイベントループ
+        self.polling_thread = None  # ポーリング用スレッド
+        self.is_shutting_down = False  # シャットダウンフラグ
+
         # 上部バー
         top_frame = tk.Frame(root)
         top_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
@@ -567,6 +575,12 @@ class AxisToolApp:
         if group_names:
             self.build_axes_for_group(group_names[0])
 
+        # 非同期ポーリングのセットアップと開始
+        self.setup_async_polling()
+
+        # アプリケーションの終了時にポーリングを停止するためのプロトコル
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
     # ---------- ヘルパー ----------
     def get_axis_label_text(self, axis: Axis):
         if self.axis_label_mode.get() == "name":
@@ -586,6 +600,14 @@ class AxisToolApp:
         # グループ変更時にエラー軸リストとstatus無効リストをクリア
         self.error_axes.clear()
         self.status_disabled_axes.clear()
+
+        # 実行中のタスクをすべてキャンセル
+        if self.loop:
+            for task in self.polling_tasks.values():
+                if not task.done():
+                    self.loop.call_soon_threadsafe(task.cancel)
+            self.polling_tasks.clear()
+
         self.build_axes_for_group(new_group)
         self.poll_all_axes()
         if new_group == "favorite":
@@ -612,6 +634,13 @@ class AxisToolApp:
         print(f"[Info] Resetting {num_errors} axes with errors and {num_status_disabled} axes with disabled status")
         self.error_axes.clear()
         self.status_disabled_axes.clear()
+
+        # 実行中のタスクをすべてキャンセル
+        if self.loop:
+            for task in self.polling_tasks.values():
+                if not task.done():
+                    self.loop.call_soon_threadsafe(task.cancel)
+            self.polling_tasks.clear()
 
         # 全軸のポーリングを再開
         self.poll_all_axes()
@@ -762,8 +791,8 @@ class AxisToolApp:
                 expected_pos_pulse = pos
 
         if put_position(axis, pos):
-            # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
+            # 移動先の予想位置と共に非同期ポーリングを開始
+            self.start_polling_task(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] abs command failed for {axis_name}")
@@ -813,8 +842,8 @@ class AxisToolApp:
                 expected_pos_pulse = new_pos
 
         if put_position(axis, new_pos):
-            # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
+            # 移動先の予想位置と共に非同期ポーリングを開始
+            self.start_polling_task(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] plus command failed for {axis_name}")
@@ -864,8 +893,8 @@ class AxisToolApp:
                 expected_pos_pulse = new_pos
 
         if put_position(axis, new_pos):
-            # 移動先の予想位置と共にpoll_axisを呼び出し
-            self.poll_axis(axis, expected_pos=expected_pos_pulse, after_move=True)
+            # 移動先の予想位置と共に非同期ポーリングを開始
+            self.start_polling_task(axis, expected_pos=expected_pos_pulse, after_move=True)
             self.add_to_favorite_on_move(axis)
         else:
             print(f"[Error] minus command failed for {axis_name}")
@@ -878,6 +907,7 @@ class AxisToolApp:
 
     # ---------- ポーリング ----------
     def poll_all_axes(self):
+        """全ての軸のポーリングを開始する"""
         grp = self.group_var.get()
         group_info = None
         for g in self.config_groups:
@@ -888,11 +918,11 @@ class AxisToolApp:
             return
         axes_list = self.favorite_list if grp == "favorite" else group_info.get("axes", [])
         for ax in axes_list:
-            self.poll_axis(ax)
+            self.start_polling_task(ax)
 
     def poll_axis(self, axis: Axis, expected_pos=None, after_move=False, retry_count=0):
         """
-        軸の状態と位置を取得して表示を更新する
+        軸の状態と位置を取得して表示を更新する（非同期版のラッパー）
 
         Parameters:
         - axis: 対象の軸
@@ -900,133 +930,8 @@ class AxisToolApp:
         - after_move: 移動命令直後かどうか
         - retry_count: リトライ回数（再帰呼び出し用）
         """
-        axis_name = axis.axis_name
-        if axis_name not in self.axis_widgets:
-            return
-
-        # エラーが発生している軸はポーリングしない（after_move=True の場合は例外）
-        if axis_name in self.error_axes and not after_move:
-            return
-
-        # 位置と状態を取得
-        st, pos_int, error_flag = fetch_state_and_position(axis)
-        w = self.axis_widgets[axis_name]
-        s = axis.sense
-        lbl_pos = w["pos_label"]
-
-        # ステータス情報を取得（リミット状態など）
-        # statusコマンドが失敗した軸はリミット情報を取得しない
-        if axis_name not in self.status_disabled_axes:
-            # statusコマンドを試行
-            status_success = fetch_axis_status(axis)
-
-            # 失敗した場合は以降のポーリングでskipするリストに追加
-            if not status_success:
-                print(f"[Info] Status command failed for {axis_name}, disabling status polling for this axis")
-                self.status_disabled_axes.add(axis_name)
-                # リミット情報をクリア
-                axis.cw_hard_limit = False
-                axis.ccw_hard_limit = False
-                axis.cw_soft_limit = False
-                axis.ccw_soft_limit = False
-                axis.home_position = False
-                axis.status_decimal = 0
-        else:
-            # 以前に失敗したことがある軸はリミット情報をクリア
-            axis.cw_hard_limit = False
-            axis.ccw_hard_limit = False
-            axis.cw_soft_limit = False
-            axis.ccw_soft_limit = False
-            axis.home_position = False
-            axis.status_decimal = 0
-
-        # エラー状態の場合は特別処理
-        if error_flag:
-            w["pos_var"].set("ERROR")
-            lbl_pos.config(bg="red")
-
-            # エラー軸リストに追加（再ポーリングしない）
-            print(f"[Error] Axis {axis_name} added to error list - will not be polled again")
-            self.error_axes.add(axis_name)
-            return
-
-        # リミット表示の更新
-        limit_labels = w.get("limit_labels", [])
-        if len(limit_labels) == 5:
-            # cw hard limit, cw soft limit, home, ccw soft limit, ccw hard limit の順
-            # リミット状態をビジュアル表示（□/■で表示、リミットはred、homeはblue）
-            states = [
-                (axis.cw_hard_limit, "red"),     # CW Hard Limit (index 0)
-                (axis.cw_soft_limit, "red"),     # CW Soft Limit (index 1)
-                (axis.home_position, "blue"),    # Home Position (index 2)
-                (axis.ccw_soft_limit, "red"),    # CCW Soft Limit (index 3)
-                (axis.ccw_hard_limit, "red")     # CCW Hard Limit (index 4)
-            ]
-
-            for i, (state, color) in enumerate(states):
-                if state:
-                    limit_labels[i].config(text="■", fg=color)
-                else:
-                    limit_labels[i].config(text="□", fg="black")
-
-        # 位置表示の更新 (現在の表示モードと軸の単位に応じて表示)
-        adjusted_value = pos_int * s  # センス値を適用した値
-
-        if self.unit_var.get() == "pulse":
-            # GUIがパルス表示モードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
-                # 特殊単位の軸も標準軸と同様にpulseのみを表示
-                pulse_val = int(adjusted_value * axis.val2pulse)
-                w["pos_var"].set(f"{pulse_val} pulse")
-            else:
-                # 通常の軸はそのままpulseで表示
-                w["pos_var"].set(f"{int(adjusted_value)} pulse")
-        else:
-            # GUIがmm表示モードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
-                # 特殊単位の軸はその単位でそのまま表示
-                w["pos_var"].set(f"{adjusted_value} {axis.unit}")
-            else:
-                # 通常の軸はmm単位に変換
-                mm_val = adjusted_value / axis.val2pulse
-                w["pos_var"].set(f"{mm_val:.3f} mm")
-
-        # 移動命令直後の特別処理
-        if after_move and expected_pos is not None and retry_count < 3:
-            if st.lower() == "inactive" and abs(pos_int - expected_pos) > 10:
-                # 移動命令直後なのに inactive かつ位置が予想と違う場合
-                # → 100ms後に再度確認（最大3回）
-                print(f"[Info] Movement command sent but axis {axis_name} reports 'inactive'. Rechecking in 100ms...")
-                # 明示的にコピーした軸オブジェクトとパラメータを使用
-                axis_copy = axis.copy()
-                next_retry = retry_count + 1
-                def retry_check():
-                    self.poll_axis(axis_copy, expected_pos, True, next_retry)
-                self.root.after(100, retry_check)
-                return
-
-        # 状態に応じた背景色の設定（主にエラーと動作中の表示）
-        bg_color = self.bg_default[axis_name]
-
-        # 通常の状態監視
-        if st.lower() == "error":
-            bg_color = "red"
-            # エラー状態でも5秒後に再ポーリング
-            # 軸オブジェクトをコピーして使用
-            axis_copy = axis.copy()
-            def error_recheck():
-                self.poll_axis(axis_copy)
-            self.root.after(5000, error_recheck)
-        elif st.lower() != "inactive":
-            bg_color = "yellow"  # 移動中
-            # 動いている間は1秒ごとに再ポーリング
-            # 軸オブジェクトをコピーして使用
-            axis_copy = axis.copy()
-            def moving_recheck():
-                self.poll_axis(axis_copy)
-            self.root.after(1000, moving_recheck)
-
-        lbl_pos.config(bg=bg_color)
+        # 非同期バージョンのポーリング処理を開始
+        self.start_polling_task(axis, expected_pos, after_move, retry_count)
 
     def update_all_positions(self):
         """
@@ -1220,6 +1125,202 @@ class AxisToolApp:
             messagebox.showinfo("Success", f"Favorite group '{group_name}' saved successfully in '{filename}'.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save '{filename}': {e}")
+
+    # ---------- 非同期ポーリング処理 ----------
+    def setup_async_polling(self):
+        """非同期ポーリングの初期設定"""
+        # ポーリングスレッドの作成と開始
+        self.polling_thread = threading.Thread(target=self.run_async_loop, daemon=True)
+        self.polling_thread.start()
+
+    def run_async_loop(self):
+        """非同期イベントループを実行するスレッド関数"""
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            self.loop.run_forever()
+        finally:
+            self.loop.close()
+
+    def on_closing(self):
+        """アプリケーション終了時の処理"""
+        self.is_shutting_down = True
+        # 実行中のタスクをキャンセル
+        if self.loop:
+            for task in self.polling_tasks.values():
+                if not task.done():
+                    self.loop.call_soon_threadsafe(task.cancel)
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        self.root.destroy()
+
+    def start_polling_task(self, axis, expected_pos=None, after_move=False, retry_count=0):
+        """軸ごとの非同期ポーリングタスクを開始"""
+        # 既存のタスクがあればキャンセル
+        axis_name = axis.axis_name
+        if axis_name in self.polling_tasks and not self.polling_tasks[axis_name].done():
+            self.loop.call_soon_threadsafe(self.polling_tasks[axis_name].cancel)
+
+        # 新しいタスクを作成して開始
+        if self.loop:
+            # axisのコピーを使用して新しいタスクを作成
+            axis_copy = axis.copy()
+            future = asyncio.run_coroutine_threadsafe(
+                self.poll_axis_async(axis_copy, expected_pos, after_move, retry_count),
+                self.loop
+            )
+            self.polling_tasks[axis_name] = future
+
+    async def poll_axis_async(self, axis, expected_pos=None, after_move=False, retry_count=0):
+        """軸の状態と位置を非同期で取得して表示を更新する"""
+        axis_name = axis.axis_name
+
+        # シャットダウン中なら処理しない
+        if self.is_shutting_down:
+            return
+
+        # GUIスレッドでのウィジェット更新
+        if axis_name not in self.axis_widgets:
+            return
+
+        # エラーが発生している軸はポーリングしない（after_move=True の場合は例外）
+        if axis_name in self.error_axes and not after_move:
+            return
+
+        # 位置と状態を取得（メインループをブロックしないよう非同期で実行）
+        def fetch_data():
+            return fetch_state_and_position(axis)
+
+        # 時間のかかる通信処理をスレッドプールで実行
+        st, pos_int, error_flag = await asyncio.get_event_loop().run_in_executor(None, fetch_data)
+
+        # メインスレッド（GUIスレッド）で実行する必要がある処理
+        def update_ui():
+            if axis_name not in self.axis_widgets:
+                return
+
+            w = self.axis_widgets[axis_name]
+            s = axis.sense
+            lbl_pos = w["pos_label"]
+
+            # ステータス情報を取得（リミット状態など）
+            # statusコマンドが失敗した軸はリミット情報を取得しない
+            if axis_name not in self.status_disabled_axes:
+                # statusコマンド実行
+                def fetch_status():
+                    return fetch_axis_status(axis)
+
+                # 非同期で実行（今回はUIを続けて更新するので結果を待つ）
+                status_success = fetch_status()
+
+                # 失敗した場合は以降のポーリングでskipするリストに追加
+                if not status_success:
+                    print(f"[Info] Status command failed for {axis_name}, disabling status polling for this axis")
+                    self.status_disabled_axes.add(axis_name)
+                    # リミット情報をクリア
+                    axis.cw_hard_limit = False
+                    axis.ccw_hard_limit = False
+                    axis.cw_soft_limit = False
+                    axis.ccw_soft_limit = False
+                    axis.home_position = False
+                    axis.status_decimal = 0
+            else:
+                # 以前に失敗したことがある軸はリミット情報をクリア
+                axis.cw_hard_limit = False
+                axis.ccw_hard_limit = False
+                axis.cw_soft_limit = False
+                axis.ccw_soft_limit = False
+                axis.home_position = False
+                axis.status_decimal = 0
+
+            # エラー状態の場合は特別処理
+            if error_flag:
+                w["pos_var"].set("ERROR")
+                lbl_pos.config(bg="red")
+
+                # エラー軸リストに追加（再ポーリングしない）
+                print(f"[Error] Axis {axis_name} added to error list - will not be polled again")
+                self.error_axes.add(axis_name)
+                return
+
+            # リミット表示の更新
+            limit_labels = w.get("limit_labels", [])
+            if len(limit_labels) == 5:
+                # cw hard limit, cw soft limit, home, ccw soft limit, ccw hard limit の順
+                # リミット状態をビジュアル表示（□/■で表示、リミットはred、homeはblue）
+                states = [
+                    (axis.cw_hard_limit, "red"),     # CW Hard Limit (index 0)
+                    (axis.cw_soft_limit, "red"),     # CW Soft Limit (index 1)
+                    (axis.home_position, "blue"),    # Home Position (index 2)
+                    (axis.ccw_soft_limit, "red"),    # CCW Soft Limit (index 3)
+                    (axis.ccw_hard_limit, "red")     # CCW Hard Limit (index 4)
+                ]
+
+                for i, (state, color) in enumerate(states):
+                    if state:
+                        limit_labels[i].config(text="■", fg=color)
+                    else:
+                        limit_labels[i].config(text="□", fg="black")
+
+            # 位置表示の更新 (現在の表示モードと軸の単位に応じて表示)
+            adjusted_value = pos_int * s  # センス値を適用した値
+
+            if self.unit_var.get() == "pulse":
+                # GUIがパルス表示モードの場合
+                if axis.unit in ["mm", "deg", "mrad"]:
+                    # 特殊単位の軸も標準軸と同様にpulseのみを表示
+                    pulse_val = int(adjusted_value * axis.val2pulse)
+                    w["pos_var"].set(f"{pulse_val} pulse")
+                else:
+                    # 通常の軸はそのままpulseで表示
+                    w["pos_var"].set(f"{int(adjusted_value)} pulse")
+            else:
+                # GUIがmm表示モードの場合
+                if axis.unit in ["mm", "deg", "mrad"]:
+                    # 特殊単位の軸はその単位でそのまま表示
+                    w["pos_var"].set(f"{adjusted_value} {axis.unit}")
+                else:
+                    # 通常の軸はmm単位に変換
+                    mm_val = adjusted_value / axis.val2pulse
+                    w["pos_var"].set(f"{mm_val:.3f} mm")
+
+            # 状態に応じた背景色の設定（主にエラーと動作中の表示）
+            bg_color = self.bg_default[axis_name]
+
+            if st.lower() == "error":
+                bg_color = "red"
+            elif st.lower() != "inactive":
+                bg_color = "yellow"  # 移動中
+
+            lbl_pos.config(bg=bg_color)
+
+        # GUIスレッドで表示更新を実行
+        if not self.is_shutting_down:
+            self.root.after(0, update_ui)
+
+        # 移動命令直後の特別処理
+        if after_move and expected_pos is not None and retry_count < 3:
+            if st.lower() == "inactive" and abs(pos_int - expected_pos) > 10:
+                # 移動命令直後なのに inactive かつ位置が予想と違う場合
+                # → 100ms後に再度確認（最大3回）
+                print(f"[Info] Movement command sent but axis {axis_name} reports 'inactive'. Rechecking in 100ms...")
+                # 非同期で待機してから再ポーリング
+                await asyncio.sleep(0.1)
+                if not self.is_shutting_down:
+                    await self.poll_axis_async(axis, expected_pos, True, retry_count + 1)
+                return
+
+        # 継続的なポーリングの設定
+        if not self.is_shutting_down:
+            if st.lower() == "error":
+                # エラー状態でも5秒後に再ポーリング
+                await asyncio.sleep(5.0)
+                if not self.is_shutting_down and axis_name not in self.error_axes:
+                    self.start_polling_task(axis)
+            elif st.lower() != "inactive":
+                # 動いている間は1秒ごとに再ポーリング
+                await asyncio.sleep(1.0)
+                if not self.is_shutting_down:
+                    self.start_polling_task(axis)
 
     def load_user_group(self):
         """
