@@ -8,6 +8,7 @@ import os
 import time
 import asyncio
 import threading
+from asyncio import Lock
 from tkinter import simpledialog, messagebox
 
 # BSS_CONFIG_PATH: envの${BLCONFIG}を使用。設定されていない場合はデフォルト値
@@ -506,6 +507,7 @@ class AxisToolApp:
         self.loop = None  # asyncioのイベントループ
         self.polling_thread = None  # ポーリング用スレッド
         self.is_shutting_down = False  # シャットダウンフラグ
+        self.socket_lock = None  # ソケット通信用の排他ロック（初期化はsetup_async_pollingで行う）
 
         # 上部バー
         top_frame = tk.Frame(root)
@@ -1137,10 +1139,34 @@ class AxisToolApp:
         """非同期イベントループを実行するスレッド関数"""
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
+        # ソケット通信用のロックを作成
+        self.socket_lock = asyncio.Lock()
         try:
             self.loop.run_forever()
         finally:
             self.loop.close()
+
+    async def async_fetch_state_and_position(self, axis: Axis):
+        """
+        排他制御付きの非同期状態・位置取得関数
+        1つの軸の通信が完了するまで他の軸の通信をブロックする
+        これによりrequest-reply通信の順序が保証される
+        """
+        # ロックを取得して他の軸の通信をブロック
+        async with self.socket_lock:
+            # 時間のかかる通信処理をスレッドプールで実行
+            return await self.loop.run_in_executor(None, lambda: fetch_state_and_position(axis))
+
+    async def async_fetch_axis_status(self, axis: Axis):
+        """
+        排他制御付きの非同期ステータス取得関数
+        1つの軸の通信が完了するまで他の軸の通信をブロックする
+        これによりrequest-reply通信の順序が保証される
+        """
+        # ロックを取得して他の軸の通信をブロック
+        async with self.socket_lock:
+            # 時間のかかる通信処理をスレッドプールで実行
+            return await self.loop.run_in_executor(None, lambda: fetch_axis_status(axis))
 
     def on_closing(self):
         """アプリケーション終了時の処理"""
@@ -1186,12 +1212,34 @@ class AxisToolApp:
         if axis_name in self.error_axes and not after_move:
             return
 
-        # 位置と状態を取得（メインループをブロックしないよう非同期で実行）
-        def fetch_data():
-            return fetch_state_and_position(axis)
+        # 位置と状態を排他制御付きで取得
+        st, pos_int, error_flag = await self.async_fetch_state_and_position(axis)
 
-        # 時間のかかる通信処理をスレッドプールで実行
-        st, pos_int, error_flag = await asyncio.get_event_loop().run_in_executor(None, fetch_data)
+        # ステータス情報を取得（リミット状態など）
+        # statusコマンドが失敗した軸はリミット情報を取得しない
+        if axis_name not in self.status_disabled_axes:
+            # 排他制御付きでstatusコマンドを実行
+            status_success = await self.async_fetch_axis_status(axis)
+
+            # 失敗した場合は以降のポーリングでskipするリストに追加
+            if not status_success:
+                print(f"[Info] Status command failed for {axis_name}, disabling status polling for this axis")
+                self.status_disabled_axes.add(axis_name)
+                # リミット情報をクリア
+                axis.cw_hard_limit = False
+                axis.ccw_hard_limit = False
+                axis.cw_soft_limit = False
+                axis.ccw_soft_limit = False
+                axis.home_position = False
+                axis.status_decimal = 0
+        else:
+            # 以前に失敗したことがある軸はリミット情報をクリア
+            axis.cw_hard_limit = False
+            axis.ccw_hard_limit = False
+            axis.cw_soft_limit = False
+            axis.ccw_soft_limit = False
+            axis.home_position = False
+            axis.status_decimal = 0
 
         # メインスレッド（GUIスレッド）で実行する必要がある処理
         def update_ui():
@@ -1201,36 +1249,6 @@ class AxisToolApp:
             w = self.axis_widgets[axis_name]
             s = axis.sense
             lbl_pos = w["pos_label"]
-
-            # ステータス情報を取得（リミット状態など）
-            # statusコマンドが失敗した軸はリミット情報を取得しない
-            if axis_name not in self.status_disabled_axes:
-                # statusコマンド実行
-                def fetch_status():
-                    return fetch_axis_status(axis)
-
-                # 非同期で実行（今回はUIを続けて更新するので結果を待つ）
-                status_success = fetch_status()
-
-                # 失敗した場合は以降のポーリングでskipするリストに追加
-                if not status_success:
-                    print(f"[Info] Status command failed for {axis_name}, disabling status polling for this axis")
-                    self.status_disabled_axes.add(axis_name)
-                    # リミット情報をクリア
-                    axis.cw_hard_limit = False
-                    axis.ccw_hard_limit = False
-                    axis.cw_soft_limit = False
-                    axis.ccw_soft_limit = False
-                    axis.home_position = False
-                    axis.status_decimal = 0
-            else:
-                # 以前に失敗したことがある軸はリミット情報をクリア
-                axis.cw_hard_limit = False
-                axis.ccw_hard_limit = False
-                axis.cw_soft_limit = False
-                axis.ccw_soft_limit = False
-                axis.home_position = False
-                axis.status_decimal = 0
 
             # エラー状態の場合は特別処理
             if error_flag:
