@@ -288,7 +288,7 @@ def fetch_state_and_position(axis: Axis):
 
 def put_position(axis: Axis, position: float) -> bool:
     """
-    単位に応じたputコマンドを送信し、応答が "ok/0" なら True を返す
+    単位に応じたputコマンドを送信し、応答が "/0" で終わるなら True を返す
     - "put/{BL_OBJ}_{axis.axis_name}/{position}pulse"
     - "put/{BL_OBJ}_{axis.axis_name}/{position}mm"
     - "put/{BL_OBJ}_{axis.axis_name}/{position}deg"
@@ -324,7 +324,8 @@ def put_position(axis: Axis, position: float) -> bool:
                     print(f"[Error] Empty response for put_position of {axis_name}")
                     return False
 
-                return ("ok/0" in resp)
+                # 応答の最後が"/0"であればTrue
+                return resp.endswith("/0")
             except socket.timeout:
                 print(f"[Error] Timeout in put_position for {axis_name}")
                 return False
@@ -342,7 +343,7 @@ def put_position(axis: Axis, position: float) -> bool:
 def put_stop(axis: Axis) -> bool:
     """
     "put/{BL_OBJ}_{axis.axis_name}/stop" を送信し、
-    応答が "ok/0" なら True を返す
+    応答が "/0" で終わるなら True を返す
     """
     axis_name = axis.axis_name
     try:
@@ -360,7 +361,8 @@ def put_stop(axis: Axis) -> bool:
                     print(f"[Error] Empty response for put_stop of {axis_name}")
                     return False
 
-                return ("ok/0" in resp)
+                # 応答の最後が"/0"であればTrue
+                return resp.endswith("/0")
             except socket.timeout:
                 print(f"[Error] Timeout in put_stop for {axis_name}")
                 return False
