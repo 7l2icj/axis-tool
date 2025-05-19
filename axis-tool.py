@@ -201,6 +201,8 @@ def fetch_state_and_position(axis: Axis):
 
                 # クエリ応答の解析
                 splitted = resp.split('/')
+                query_has_position = False  # queryに位置情報が含まれているかのフラグ
+
                 if len(splitted) > 3:
                     part = splitted[3]
 
@@ -227,19 +229,24 @@ def fetch_state_and_position(axis: Axis):
                             pos = float(pos_part.replace(found_unit, "").strip())
                             # 応答の単位を覚えておく
                             axis.unit = found_unit
+                            query_has_position = True
                             return (st, pos, False)
                         except (ValueError, IndexError):
                             pass
 
-                    # 2. 通常のステータス情報のみを抽出
+                    # 2. 状態情報の抽出（位置情報付きの場合）
                     if part == "ok":
                         st = "inactive"
+                    elif part == "0" and len(splitted) > 2 and splitted[2] in ["ok", "active"]:
+                        # /ok/0 や /active/0 のパターン
+                        st = "inactive" if splitted[2] == "ok" else splitted[2]
                     elif '_' in part:
                         # 例: moving_12345pulse
                         try:
                             st, pos_str = part.split('_', 1)
                             try:
                                 pos_int = int(pos_str.replace("pulse", "").strip())
+                                query_has_position = True
                                 return (st, pos_int, False)
                             except ValueError:
                                 pass
@@ -247,16 +254,22 @@ def fetch_state_and_position(axis: Axis):
                             if part.startswith("inactive_") or part.startswith("moving_"):
                                 st = part.split('_')[0]
 
-                # queryだけでは位置がわからない場合、position/aperture を取得する
-                if axis.unit == "mm" or axis_name.endswith("width") or axis_name.endswith("height") or axis_name.endswith("vertical") or axis_name.endswith("horizontal"):
+                # queryだけでは位置がわからない場合、別のコマンドで位置を取得
+                if not query_has_position:
                     # 位置取得コマンドを決定
-                    if axis_name.endswith("width") or axis_name.endswith("height"):
-                        cmd = f"get/{BL_OBJ}_{axis_name}/aperture\n"
-                    else:
-                        cmd = f"get/{BL_OBJ}_{axis_name}/position\n"
+                    position_cmd = None
 
-                    print("[Send]", cmd.strip())
-                    s.sendall(cmd.encode("utf-8"))
+                    # 軸の単位に基づいてコマンドを選択
+                    if axis.unit in ["deg", "mrad"] or axis_name.endswith("angle"):
+                        position_cmd = f"get/{BL_OBJ}_{axis_name}/angle\n"
+                    elif axis_name.endswith("width") or axis_name.endswith("height"):
+                        position_cmd = f"get/{BL_OBJ}_{axis_name}/aperture\n"
+                    else:
+                        # デフォルトはpositionコマンド
+                        position_cmd = f"get/{BL_OBJ}_{axis_name}/position\n"
+
+                    print("[Send]", position_cmd.strip())
+                    s.sendall(position_cmd.encode("utf-8"))
                     resp = s.recv(1024).decode("utf-8").strip()
                     print("[Recv]", resp)
 
@@ -268,13 +281,34 @@ def fetch_state_and_position(axis: Axis):
                     splitted = resp.split('/')
                     if len(splitted) > 3:
                         part = splitted[3]
-                        if 'mm' in part:
+                        # 位置情報から単位を検出
+                        pos_value = None
+                        detected_unit = None
+
+                        for unit in ["mm", "deg", "mrad", "angstroam", "kev", "pulse"]:
+                            if unit in part:
+                                try:
+                                    pos_value = float(part.replace(unit, "").strip())
+                                    detected_unit = unit
+                                    break
+                                except ValueError:
+                                    pass
+
+                        # 数値のみの場合（単位なし）
+                        if pos_value is None:
                             try:
-                                pos = float(part.replace("mm", "").strip())
-                                axis.unit = "mm"
-                                return (st, pos, False)
+                                pos_value = float(part)
+                                detected_unit = axis.unit  # 既存の単位を使用
                             except ValueError:
                                 pass
+
+                        if pos_value is not None:
+                            if detected_unit and detected_unit != "pulse":
+                                axis.unit = detected_unit
+                            return (st, pos_value, False)
+
+                # 位置情報が全く取得できない場合
+                return (st, 0, False)
 
             except socket.timeout:
                 print(f"[Error] Communication timeout for {axis_name}")
