@@ -237,9 +237,14 @@ def fetch_state_and_position(axis: Axis):
                     # 2. 状態情報の抽出（位置情報付きの場合）
                     if part == "ok":
                         st = "inactive"
-                    elif part == "0" and len(splitted) > 2 and splitted[2] in ["ok", "active"]:
+                    elif part == "0" and len(splitted) > 2:
                         # /ok/0 や /active/0 のパターン
-                        st = "inactive" if splitted[2] == "ok" else splitted[2]
+                        if splitted[2] == "ok":
+                            st = "inactive"
+                        elif splitted[2] == "active":
+                            st = "moving"  # activeは移動中の状態
+                        else:
+                            st = splitted[2]
                     elif '_' in part:
                         # 例: moving_12345pulse
                         try:
@@ -1406,11 +1411,18 @@ class AxisToolApp:
 
         # 移動命令直後の特別処理
         if after_move and expected_pos is not None and retry_count < 3:
-            if st.lower() == "inactive" and abs(pos_int - expected_pos) > 10:
+            # 軸がまだ移動中の場合は、位置に関わらず再チェック
+            if st.lower() in ["moving", "active"]:
+                # 軸が移動中なので100ms後に再度確認
+                print(f"[Info] Axis {axis_name} is still moving. Rechecking in 100ms...")
+                await asyncio.sleep(0.1)
+                if not self.is_shutting_down:
+                    await self.poll_axis_async(axis, expected_pos, True, retry_count + 1)
+                return
+            elif st.lower() == "inactive" and abs(pos_int - expected_pos) > 10:
                 # 移動命令直後なのに inactive かつ位置が予想と違う場合
                 # → 100ms後に再度確認（最大3回）
-                print(f"[Info] Movement command sent but axis {axis_name} reports 'inactive'. Rechecking in 100ms...")
-                # 非同期で待機してから再ポーリング
+                print(f"[Info] Movement command sent but axis {axis_name} reports 'inactive' and position mismatch. Rechecking in 100ms...")
                 await asyncio.sleep(0.1)
                 if not self.is_shutting_down:
                     await self.poll_axis_async(axis, expected_pos, True, retry_count + 1)
@@ -1423,8 +1435,8 @@ class AxisToolApp:
                 await asyncio.sleep(5.0)
                 if not self.is_shutting_down and axis_name not in self.error_axes:
                     self.start_polling_task(axis)
-            elif st.lower() != "inactive":
-                # 動いている間は1秒ごとに再ポーリング
+            elif st.lower() not in ["inactive", "ok"]:
+                # 動いている間（moving, active等）は0.3秒ごとに再ポーリング
                 await asyncio.sleep(0.3)
                 if not self.is_shutting_down:
                     self.start_polling_task(axis)
