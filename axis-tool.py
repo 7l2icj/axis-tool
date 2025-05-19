@@ -665,6 +665,9 @@ class AxisToolApp:
         axes_list = self.favorite_list if group_name == "favorite" else group_info.get("axes", [])
         for axis in axes_list:
             axis_name = axis.axis_name
+            # キャッシュから単位情報を読み込み
+            if axis_name in self.axis_unit_cache:
+                axis.unit = self.axis_unit_cache[axis_name]
             label_text = self.get_axis_label_text(axis)
             row_frame = tk.Frame(self.inner_frame)
             row_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=3)
@@ -716,7 +719,8 @@ class AxisToolApp:
                 "val2pulse": axis.val2pulse,
                 "sense": axis.sense,
                 "axis_label": lbl_axis,
-                "limit_labels": limit_labels
+                "limit_labels": limit_labels,
+                "unit": axis.unit  # 単位情報も保存
             }
         self.inner_frame.update_idletasks()
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -1147,6 +1151,8 @@ class AxisToolApp:
     # ---------- 非同期ポーリング処理 ----------
     def setup_async_polling(self):
         """非同期ポーリングの初期設定"""
+        # 軸ごとの単位情報を保存する辞書を作成
+        self.axis_unit_cache = {}
         # ポーリングスレッドの作成と開始
         self.polling_thread = threading.Thread(target=self.run_async_loop, daemon=True)
         self.polling_thread.start()
@@ -1230,6 +1236,14 @@ class AxisToolApp:
 
         # 位置と状態を排他制御付きで取得
         st, pos_int, error_flag = await self.async_fetch_state_and_position(axis)
+
+        # 単位情報が取得できた場合は、ウィジェットとキャッシュに保存
+        if not error_flag and axis.unit != "pulse":
+            # ウィジェットに保存
+            if axis_name in self.axis_widgets:
+                self.axis_widgets[axis_name]["unit"] = axis.unit
+            # グローバルキャッシュに保存
+            self.axis_unit_cache[axis_name] = axis.unit
 
         # ステータス情報を取得（リミット状態など）
         # statusコマンドが失敗した軸はリミット情報を取得しない
