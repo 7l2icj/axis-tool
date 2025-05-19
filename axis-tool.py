@@ -134,6 +134,7 @@ def parse_bss_config(config_path: str):
         axis_comment = ""
         val2pulse = 1000
         sense = 1  # デフォルトは 1
+        cunit = "pulse"  # デフォルトは pulse
         for l in blk:
             if l.startswith("_axis_name:"):
                 axis_name = l.split(":", 1)[1].strip()
@@ -153,9 +154,15 @@ def parse_bss_config(config_path: str):
                         sense = 1
                 except ValueError:
                     pass
+            elif l.startswith("_cunit:"):
+                # _cunitの読み取り
+                cunit_tmp = l.split(":", 1)[1].strip()
+                if cunit_tmp in ["mm", "deg", "mrad", "angstroam", "kev", "pulse"]:
+                    cunit = cunit_tmp
         if axis_name:
             display = axis_comment.split(",", 1)[0].strip() if axis_comment else axis_name
-            result.append(Axis(axis_name, display, val2pulse, sense, unit="pulse"))
+            # cunitを持つAxisオブジェクトを作成
+            result.append(Axis(axis_name, display, val2pulse, sense, unit=cunit))
     return result
 
 
@@ -480,11 +487,13 @@ def load_config(yaml_file: str):
                             if aname in bss_axes_map:
                                 aval2pulse = bss_axes_map[aname].val2pulse
                                 asense = bss_axes_map[aname].sense
+                                aunit = bss_axes_map[aname].unit  # cunitもコピー
                             else:
                                 aval2pulse = 1000
                                 asense = 1
+                                aunit = "pulse"
                             if aname:
-                                axis_obj = Axis(aname, adisplay, aval2pulse, asense, unit="pulse")
+                                axis_obj = Axis(aname, adisplay, aval2pulse, asense, unit=aunit)
                                 axes_list.append(axis_obj)
                 if grp_name:
                     groups.append({
@@ -1155,6 +1164,13 @@ class AxisToolApp:
         """非同期ポーリングの初期設定"""
         # 軸ごとの単位情報を保存する辞書を作成
         self.axis_unit_cache = {}
+
+        # bss.configから読み込んだcunit情報を初期設定
+        for group in self.config_groups:
+            for axis in group.get("axes", []):
+                if axis.unit != "pulse":  # pulseでない場合は初期設定
+                    self.axis_unit_cache[axis.axis_name] = axis.unit
+
         # ポーリングスレッドの作成と開始
         self.polling_thread = threading.Thread(target=self.run_async_loop, daemon=True)
         self.polling_thread.start()
