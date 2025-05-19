@@ -576,11 +576,13 @@ class AxisToolApp:
         # 内部管理：各軸ごとのウィジェットを保持（キーは axis.axis_name）
         self.axis_widgets = {}
         self.bg_default = {}
+
+        # 非同期ポーリングのセットアップ（axis_unit_cacheの初期化も含む）
+        self.setup_async_polling()
+
+        # 軸の構築（setup_async_pollingの後で実行）
         if group_names:
             self.build_axes_for_group(group_names[0])
-
-        # 非同期ポーリングのセットアップと開始
-        self.setup_async_polling()
 
         # アプリケーションの終了時にポーリングを停止するためのプロトコル
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
