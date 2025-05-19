@@ -198,7 +198,7 @@ def fetch_state_and_position(axis: Axis):
                     part = splitted[3]
 
                     # 1. query応答で直接単位つきで値が返ってくる場合の処理
-                    units = ["mm", "deg", "mrad"]  # 対応する単位リスト
+                    units = ["mm", "deg", "mrad", "angstroam", "kev"]  # 対応する単位リスト
                     found_unit = None
 
                     # どの単位が含まれているか確認
@@ -306,7 +306,7 @@ def put_position(axis: Axis, position: float) -> bool:
 
                 # 特殊単位の場合は、その単位をそのまま使用
                 # mm, deg, mrad のいずれかの単位が設定されていれば、その単位を使用
-                if axis.unit in ["mm", "deg", "mrad"]:
+                if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     unit_suffix = axis.unit
                     # 単位付きの軸はそのままの値を送信
                     value_to_send = position
@@ -688,7 +688,7 @@ class AxisToolApp:
             pos_var = tk.StringVar(value="---")
             lbl_pos = tk.Label(row_frame, textvariable=pos_var, width=15, anchor="e")
             # 軸のユニットに応じて文字色を設定
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
             else:
                 lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
@@ -778,7 +778,7 @@ class AxisToolApp:
         # GUIモードと軸タイプに応じた入力値の処理
         if self.unit_var.get() == "pulse":
             # GUIがpulseモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸へのパルス値入力
                 # パルス値を特殊単位に変換して送信
                 unit_val = fv / axis.val2pulse
@@ -790,7 +790,7 @@ class AxisToolApp:
                 expected_pos_pulse = pos
         else:
             # GUIがmmモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸への値入力 (mmで入力されている場合も元の単位で送信)
                 pos = fv * s  # センス値は適用
                 expected_pos_pulse = int(pos * axis.val2pulse)
@@ -827,7 +827,7 @@ class AxisToolApp:
         # GUIモードと軸タイプに応じた入力値の処理
         if self.unit_var.get() == "pulse":
             # GUIがpulseモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸へのパルス値入力
                 diff = fv / axis.val2pulse  # パルス値を特殊単位に変換
                 new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
@@ -839,7 +839,7 @@ class AxisToolApp:
                 expected_pos_pulse = new_pos
         else:
             # GUIがmmモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸への値入力
                 diff = fv
                 new_pos = cur_pos + (diff * s)  # センス値を考慮して加算
@@ -878,7 +878,7 @@ class AxisToolApp:
         # GUIモードと軸タイプに応じた入力値の処理
         if self.unit_var.get() == "pulse":
             # GUIがpulseモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸へのパルス値入力
                 diff = fv / axis.val2pulse  # パルス値を特殊単位に変換
                 new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
@@ -890,7 +890,7 @@ class AxisToolApp:
                 expected_pos_pulse = new_pos
         else:
             # GUIがmmモードの場合
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸への値入力
                 diff = fv
                 new_pos = cur_pos - (diff * s)  # センス値を考慮して減算
@@ -973,7 +973,7 @@ class AxisToolApp:
             unit_value = None
 
             # 特殊単位の軸（mm, deg, mrad）の場合
-            if axis_obj.unit in ["mm", "deg", "mrad"]:
+            if axis_obj.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 # 特殊単位の軸でパルス表示モードの場合（例: "12345 pulse (1.234 mm)"）
                 if "pulse" in txt and "(" in txt and ")" in txt:
                     # パルス値と単位値の両方を取得
@@ -992,7 +992,7 @@ class AxisToolApp:
                         continue
                 else:
                     # 単位値のみの表示（例: "1.234 mm"）
-                    for unit in ["mm", "deg", "mrad"]:
+                    for unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                         if unit in txt:
                             try:
                                 unit_value = float(txt.replace(unit, "").strip())
@@ -1026,7 +1026,7 @@ class AxisToolApp:
             lbl_pos = wdict.get("pos_label")
             if lbl_pos:
                 # pulse軸は黒、特殊単位軸（mm/deg/mrad）は青色
-                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                if axis_obj.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
                 else:
                     lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
@@ -1034,7 +1034,7 @@ class AxisToolApp:
             # 表示モードに応じて表示を更新
             if self.unit_var.get() == "pulse":
                 # パルス表示モード
-                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                if axis_obj.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     # 特殊単位の軸も標準軸と同様にpulseのみを表示
                     pulse_val = int(adjusted_value * val2pulse)
                     wdict["pos_var"].set(f"{pulse_val} pulse")
@@ -1043,7 +1043,7 @@ class AxisToolApp:
                     wdict["pos_var"].set(f"{int(adjusted_value)} pulse")
             else:
                 # mm表示モード
-                if axis_obj.unit in ["mm", "deg", "mrad"]:
+                if axis_obj.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     # 特殊単位の軸はその単位で表示
                     if unit_value is None:
                         unit_value = adjusted_value / val2pulse
@@ -1079,7 +1079,7 @@ class AxisToolApp:
                 time.sleep(0.1)
 
                 # 軸の単位に応じて表示
-                if ax.unit in ["mm", "deg", "mrad"]:
+                if ax.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     # 特殊単位の軸はその単位で記録
                     lines_axis.append(f"      - {ax.axis_name}: {displayed} {ax.unit}")
                 else:
@@ -1300,14 +1300,14 @@ class AxisToolApp:
 
             # 軸のユニットに応じて文字色を設定
             # pulse軸は黒、特殊単位軸（mm/deg/mrad）は青色
-            if axis.unit in ["mm", "deg", "mrad"]:
+            if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                 lbl_pos.config(fg="blue")  # 特殊単位の軸は青色
             else:
                 lbl_pos.config(fg="black")  # 通常のpulse軸は黒色
 
             if self.unit_var.get() == "pulse":
                 # GUIがパルス表示モードの場合
-                if axis.unit in ["mm", "deg", "mrad"]:
+                if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     # 特殊単位の軸も標準軸と同様にpulseのみを表示
                     pulse_val = int(adjusted_value * axis.val2pulse)
                     w["pos_var"].set(f"{pulse_val} pulse")
@@ -1316,7 +1316,7 @@ class AxisToolApp:
                     w["pos_var"].set(f"{int(adjusted_value)} pulse")
             else:
                 # GUIがmm表示モードの場合
-                if axis.unit in ["mm", "deg", "mrad"]:
+                if axis.unit in ["mm", "deg", "mrad", "angstroam", "kev"]:
                     # 特殊単位の軸はその単位でそのまま表示
                     w["pos_var"].set(f"{adjusted_value} {axis.unit}")
                 else:
